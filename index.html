@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SKYFALL STRIKE — Face Controlled Jet Combat</title>
+    <meta name="description" content="Control a fighter jet with your face! AI-powered browser game using real-time facial recognition.">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Loading Screen -->
+        <div id="loading-screen">
+            <div class="loader-content">
+                <div class="logo-glow">
+                    <h1 class="game-logo">SKYFALL<span>STRIKE</span></h1>
+                </div>
+                <p id="loading-text">Initializing AI Face Detection...</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                    <div class="progress-glow"></div>
+                </div>
+                <div class="loading-dots">
+                    <span></span><span></span><span></span>
+                </div>
+            </div>
+            <div class="bg-grid"></div>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="screen hidden">
+            <div class="start-content">
+                <h1 class="game-logo big">SKYFALL<span>STRIKE</span></h1>
+                <p class="tagline">Control with your face. Destroy with precision.</p>
+                <div class="controls-guide">
+                    <div class="control-item">
+                        <div class="control-icon">🔄</div>
+                        <div class="control-text">
+                            <strong>Move Head</strong>
+                            <span>Steer your jet</span>
+                        </div>
+                    </div>
+                    <div class="control-item">
+                        <div class="control-icon">👄</div>
+                        <div class="control-text">
+                            <strong>Open Mouth</strong>
+                            <span>Fire weapons</span>
+                        </div>
+                    </div>
+                    <div class="control-item">
+                        <div class="control-icon">🤨</div>
+                        <div class="control-text">
+                            <strong>Raise Eyebrows</strong>
+                            <span>Special attack</span>
+                        </div>
+                    </div>
+                    <div class="control-item">
+                        <div class="control-icon">⌨️</div>
+                        <div class="control-text">
+                            <strong>Keyboard Fallback</strong>
+                            <span>Arrows + Space + Shift</span>
+                        </div>
+                    </div>
+                </div>
+                <button id="start-btn" class="neon-btn">LAUNCH MISSION</button>
+                <p class="cam-note">📷 Camera access required for face controls</p>
+            </div>
+            <div class="bg-grid"></div>
+        </div>
+
+        <!-- Game Screen -->
+        <div id="game-screen" class="screen hidden">
+            <canvas id="game-canvas"></canvas>
+
+            <!-- Face Cam Preview -->
+            <div id="face-cam-container">
+                <video id="webcam" autoplay playsinline muted></video>
+                <div class="cam-border"></div>
+                <div class="cam-label">AI TRACKING</div>
+                <div class="cam-dot"></div>
+            </div>
+
+            <!-- HUD -->
+            <div id="hud">
+                <div id="hud-left">
+                    <div class="hud-item">
+                        <span class="hud-label">SCORE</span>
+                        <span id="score-value" class="hud-value">0</span>
+                    </div>
+                    <div class="hud-item">
+                        <span class="hud-label">WAVE</span>
+                        <span id="wave-value" class="hud-value">1</span>
+                    </div>
+                    <div class="hud-item">
+                        <span class="hud-label">KILLS</span>
+                        <span id="kills-value" class="hud-value">0</span>
+                    </div>
+                </div>
+                <div id="hud-center">
+                    <div id="combo-display" class="hidden">
+                        <span id="combo-value">2</span>
+                        <span class="combo-label">COMBO</span>
+                    </div>
+                </div>
+                <div id="hud-right">
+                    <div class="hud-item">
+                        <span class="hud-label">HULL INTEGRITY</span>
+                        <div class="bar-container">
+                            <div id="health-bar" class="bar">
+                                <div id="health-fill" class="bar-fill health"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hud-item">
+                        <span class="hud-label">SPECIAL WEAPON</span>
+                        <div class="bar-container">
+                            <div id="special-bar" class="bar">
+                                <div id="special-fill" class="bar-fill special"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Wave Announcement -->
+            <div id="wave-announce" class="hidden">
+                <div class="wave-text">
+                    <span class="wave-label">WAVE</span>
+                    <span id="wave-num" class="wave-number">1</span>
+                    <span class="wave-sub">INCOMING</span>
+                </div>
+            </div>
+
+            <!-- Face Control Indicators -->
+            <div id="control-indicators">
+                <div class="indicator" id="ind-mouth">
+                    <div class="ind-dot"></div>
+                    <span>FIRE</span>
+                </div>
+                <div class="indicator" id="ind-brow">
+                    <div class="ind-dot"></div>
+                    <span>SPECIAL</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="gameover-screen" class="screen hidden">
+            <div class="gameover-content">
+                <h1 class="gameover-title">MISSION<span>FAILED</span></h1>
+                <div class="final-stats">
+                    <div class="stat-card">
+                        <span class="stat-icon">🏆</span>
+                        <span class="stat-label">FINAL SCORE</span>
+                        <span id="final-score" class="stat-value">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-icon">🌊</span>
+                        <span class="stat-label">WAVES CLEARED</span>
+                        <span id="final-waves" class="stat-value">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-icon">💀</span>
+                        <span class="stat-label">ENEMIES DESTROYED</span>
+                        <span id="final-kills" class="stat-value">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-icon">🔥</span>
+                        <span class="stat-label">MAX COMBO</span>
+                        <span id="final-combo" class="stat-value">0</span>
+                    </div>
+                </div>
+                <button id="restart-btn" class="neon-btn">RETRY MISSION</button>
+                <button id="menu-btn" class="neon-btn secondary">MAIN MENU</button>
+            </div>
+            <div class="bg-grid"></div>
+        </div>
+    </div>
+
+    <script type="module" src="game.js"></script>
+</body>
+</html>
