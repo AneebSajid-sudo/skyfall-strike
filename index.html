@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SKYFALL STRIKE — Face Controlled Jet Combat</title>
-    <meta name="description" content="Control a fighter jet with your face! AI-powered browser game using real-time facial recognition.">
+    <meta name="description" content="Control a fighter jet with your hands! AI-powered browser game using real-time hand gesture recognition.">
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -16,7 +16,7 @@
                 <div class="logo-glow">
                     <h1 class="game-logo">SKYFALL<span>STRIKE</span></h1>
                 </div>
-                <p id="loading-text">Initializing AI Face Detection...</p>
+                <p id="loading-text">Initializing AI Hand Detection...</p>
                 <div class="progress-bar">
                     <div class="progress-fill" id="progress-fill"></div>
                     <div class="progress-glow"></div>
@@ -32,26 +32,26 @@
         <div id="start-screen" class="screen hidden">
             <div class="start-content">
                 <h1 class="game-logo big">SKYFALL<span>STRIKE</span></h1>
-                <p class="tagline">Control with your face. Destroy with precision.</p>
+                <p class="tagline">Control with your hands. Destroy with precision.</p>
                 <div class="controls-guide">
                     <div class="control-item">
-                        <div class="control-icon">🔄</div>
+                        <div class="control-icon">✋</div>
                         <div class="control-text">
-                            <strong>Move Head</strong>
-                            <span>Steer your jet</span>
+                            <strong>Right Hand</strong>
+                            <span>Move to steer jet</span>
                         </div>
                     </div>
                     <div class="control-item">
-                        <div class="control-icon">👄</div>
+                        <div class="control-icon">🤚</div>
                         <div class="control-text">
-                            <strong>Open Mouth</strong>
+                            <strong>Left Hand Open</strong>
                             <span>Fire weapons</span>
                         </div>
                     </div>
                     <div class="control-item">
-                        <div class="control-icon">🤨</div>
+                        <div class="control-icon">✊</div>
                         <div class="control-text">
-                            <strong>Raise Eyebrows</strong>
+                            <strong>Left Hand Fist</strong>
                             <span>Special attack</span>
                         </div>
                     </div>
@@ -64,7 +64,7 @@
                     </div>
                 </div>
                 <button id="start-btn" class="neon-btn">LAUNCH MISSION</button>
-                <p class="cam-note">📷 Camera access required for face controls</p>
+                <p class="cam-note">📷 Camera access required for hand tracking</p>
             </div>
             <div class="bg-grid"></div>
         </div>
@@ -77,7 +77,7 @@
             <div id="face-cam-container">
                 <video id="webcam" autoplay playsinline muted></video>
                 <div class="cam-border"></div>
-                <div class="cam-label">AI TRACKING</div>
+                <div class="cam-label">HAND TRACKING</div>
                 <div class="cam-dot"></div>
             </div>
 
@@ -136,13 +136,117 @@
             <div id="control-indicators">
                 <div class="indicator" id="ind-mouth">
                     <div class="ind-dot"></div>
-                    <span>FIRE</span>
+                    <span>FIRE ✋</span>
                 </div>
                 <div class="indicator" id="ind-brow">
                     <div class="ind-dot"></div>
-                    <span>SPECIAL</span>
+                    <span>SPECIAL ✊</span>
                 </div>
             </div>
+        </div>
+
+        <!-- Upgrade Shop Screen -->
+        <div id="upgrade-screen" class="screen hidden">
+            <div class="upgrade-content">
+                <h1 class="upgrade-title">WAVE <span id="upgrade-wave-num">1</span> CLEARED</h1>
+                <p class="upgrade-subtitle">CHOOSE YOUR UPGRADES</p>
+                <div class="upgrade-currency">
+                    <span class="currency-label">AVAILABLE CREDITS</span>
+                    <span id="upgrade-credits" class="currency-value">0</span>
+                </div>
+                <div class="upgrade-grid" id="upgrade-grid">
+                    <div class="upgrade-card" data-upgrade="fireRate">
+                        <div class="upgrade-icon">🔫</div>
+                        <div class="upgrade-info">
+                            <h3 class="upgrade-name">FIRE RATE</h3>
+                            <p class="upgrade-desc">Decrease cooldown between shots</p>
+                            <div class="upgrade-level-bar">
+                                <span class="level-pip" data-level="1"></span>
+                                <span class="level-pip" data-level="2"></span>
+                                <span class="level-pip" data-level="3"></span>
+                                <span class="level-pip" data-level="4"></span>
+                                <span class="level-pip" data-level="5"></span>
+                            </div>
+                        </div>
+                        <div class="upgrade-action">
+                            <span class="upgrade-cost">500</span>
+                            <button class="upgrade-buy-btn">BUY</button>
+                        </div>
+                    </div>
+                    <div class="upgrade-card" data-upgrade="damage">
+                        <div class="upgrade-icon">💥</div>
+                        <div class="upgrade-info">
+                            <h3 class="upgrade-name">DAMAGE</h3>
+                            <p class="upgrade-desc">Increase bullet damage output</p>
+                            <div class="upgrade-level-bar">
+                                <span class="level-pip" data-level="1"></span>
+                                <span class="level-pip" data-level="2"></span>
+                                <span class="level-pip" data-level="3"></span>
+                                <span class="level-pip" data-level="4"></span>
+                                <span class="level-pip" data-level="5"></span>
+                            </div>
+                        </div>
+                        <div class="upgrade-action">
+                            <span class="upgrade-cost">500</span>
+                            <button class="upgrade-buy-btn">BUY</button>
+                        </div>
+                    </div>
+                    <div class="upgrade-card" data-upgrade="maxHealth">
+                        <div class="upgrade-icon">❤️</div>
+                        <div class="upgrade-info">
+                            <h3 class="upgrade-name">MAX HEALTH</h3>
+                            <p class="upgrade-desc">Increase hull integrity capacity</p>
+                            <div class="upgrade-level-bar">
+                                <span class="level-pip" data-level="1"></span>
+                                <span class="level-pip" data-level="2"></span>
+                                <span class="level-pip" data-level="3"></span>
+                                <span class="level-pip" data-level="4"></span>
+                                <span class="level-pip" data-level="5"></span>
+                            </div>
+                        </div>
+                        <div class="upgrade-action">
+                            <span class="upgrade-cost">400</span>
+                            <button class="upgrade-buy-btn">BUY</button>
+                        </div>
+                    </div>
+                    <div class="upgrade-card" data-upgrade="spreadShot">
+                        <div class="upgrade-icon">🎯</div>
+                        <div class="upgrade-info">
+                            <h3 class="upgrade-name">SPREAD SHOT</h3>
+                            <p class="upgrade-desc">Fire multiple bullets at once</p>
+                            <div class="upgrade-level-bar">
+                                <span class="level-pip" data-level="1"></span>
+                                <span class="level-pip" data-level="2"></span>
+                                <span class="level-pip" data-level="3"></span>
+                            </div>
+                        </div>
+                        <div class="upgrade-action">
+                            <span class="upgrade-cost">800</span>
+                            <button class="upgrade-buy-btn">BUY</button>
+                        </div>
+                    </div>
+                    <div class="upgrade-card" data-upgrade="specialCharge">
+                        <div class="upgrade-icon">⚡</div>
+                        <div class="upgrade-info">
+                            <h3 class="upgrade-name">SPECIAL CHARGE</h3>
+                            <p class="upgrade-desc">Special weapon charges faster</p>
+                            <div class="upgrade-level-bar">
+                                <span class="level-pip" data-level="1"></span>
+                                <span class="level-pip" data-level="2"></span>
+                                <span class="level-pip" data-level="3"></span>
+                                <span class="level-pip" data-level="4"></span>
+                                <span class="level-pip" data-level="5"></span>
+                            </div>
+                        </div>
+                        <div class="upgrade-action">
+                            <span class="upgrade-cost">600</span>
+                            <button class="upgrade-buy-btn">BUY</button>
+                        </div>
+                    </div>
+                </div>
+                <button id="continue-btn" class="neon-btn">NEXT WAVE ▶</button>
+            </div>
+            <div class="bg-grid"></div>
         </div>
 
         <!-- Game Over Screen -->
