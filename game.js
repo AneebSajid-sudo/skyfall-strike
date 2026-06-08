@@ -1,8 +1,8 @@
 // ================================================
-// SKYFALL STRIKE - Face Controlled Jet Combat Game
+// SKYFALL STRIKE - Hand Controlled Jet Combat Game
 // ================================================
 
-import { FaceLandmarker, FilesetResolver } from 
+import { HandLandmarker, FilesetResolver } from 
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs";
 
 // ==================== CONFIG ====================
@@ -138,10 +138,10 @@ class SoundManager {
   }
 }
 
-// ==================== FACE CONTROLLER ====================
-class FaceController {
+// ==================== HAND CONTROLLER ====================
+class HandController {
   constructor() {
-    this.faceLandmarker = null;
+    this.handLandmarker = null;
     this.video = null;
     this.isReady = false;
     this.controls = {
@@ -152,7 +152,8 @@ class FaceController {
     };
     this.smoothX = 0.5;
     this.smoothY = 0.5;
-    this.faceDetected = false;
+    this.faceDetected = false; // kept for Game class compatibility (means "hand detected")
+    this.frameSkip = 0;
   }
 
   async init(videoElement, onProgress) {
@@ -164,17 +165,15 @@ class FaceController {
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
     );
     
-    onProgress(40, 'Loading Face Landmark model...');
+    onProgress(40, 'Loading Hand Landmark model...');
     
-    this.faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+    this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
         delegate: "GPU"
       },
       runningMode: "VIDEO",
-      numFaces: 1,
-      outputFaceBlendshapes: true,
-      outputFacialTransformationMatrixes: false,
+      numHands: 2,
     });
     
     onProgress(70, 'Accessing camera...');
@@ -192,8 +191,6 @@ class FaceController {
     });
     
     onProgress(90, 'Calibrating...');
-    
-    // Warm up with a couple frames
     await new Promise(r => setTimeout(r, 500));
     
     this.isReady = true;
@@ -203,38 +200,86 @@ class FaceController {
   update() {
     if (!this.isReady || this.video.readyState < 2) return;
     
-    const results = this.faceLandmarker.detectForVideo(this.video, performance.now());
+    // Throttle detection to every 3rd frame
+    this.frameSkip++;
+    if (this.frameSkip < 3) return;
+    this.frameSkip = 0;
     
-    if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-      this.faceDetected = true;
-      const landmarks = results.faceLandmarks[0];
+    const results = this.handLandmarker.detectForVideo(this.video, performance.now());
+    
+    this.controls.shooting = false;
+    this.controls.special = false;
+    this.faceDetected = false;
+    
+    if (results.landmarks && results.landmarks.length > 0) {
+      // Categorize hands by handedness
+      // MediaPipe mirrors the camera, so "Left" label = user's right hand
+      let rightHand = null;  // user's right hand → movement
+      let leftHand = null;   // user's left hand → actions
       
-      // Nose tip for position (mirrored)
-      const rawX = 1 - landmarks[4].x;
-      const rawY = landmarks[4].y;
-      
-      // Smooth
-      this.smoothX += (rawX - this.smoothX) * CONFIG.smoothing;
-      this.smoothY += (rawY - this.smoothY) * CONFIG.smoothing;
-      
-      this.controls.x = this.smoothX;
-      this.controls.y = this.smoothY;
-      
-      // Blendshapes
-      if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
-        const bs = {};
-        results.faceBlendshapes[0].categories.forEach(b => {
-          bs[b.categoryName] = b.score;
-        });
-        
-        this.controls.shooting = (bs['jawOpen'] || 0) > CONFIG.mouthThreshold;
-        this.controls.special = (bs['browInnerUp'] || 0) > CONFIG.browThreshold;
+      for (let i = 0; i < results.landmarks.length; i++) {
+        const label = results.handedness[i][0].categoryName;
+        if (label === 'Left') {
+          rightHand = results.landmarks[i]; // mirrored: Left label = right hand
+        } else {
+          leftHand = results.landmarks[i];  // mirrored: Right label = left hand
+        }
       }
-    } else {
-      this.faceDetected = false;
+      
+      // Right hand controls movement via wrist position
+      if (rightHand) {
+        this.faceDetected = true;
+        const wrist = rightHand[0]; // landmark 0 = wrist
+        const palm = rightHand[9];  // landmark 9 = middle finger MCP (palm center)
+        
+        // Use palm center for smoother tracking, mirrored
+        const rawX = 1 - palm.x;
+        const rawY = palm.y;
+        
+        this.smoothX += (rawX - this.smoothX) * CONFIG.smoothing;
+        this.smoothY += (rawY - this.smoothY) * CONFIG.smoothing;
+        
+        this.controls.x = this.smoothX;
+        this.controls.y = this.smoothY;
+      }
+      
+      // Left hand controls actions
+      if (leftHand) {
+        const fist = this.isHandFist(leftHand);
+        const open = this.isHandOpen(leftHand);
+        
+        if (open) {
+          this.controls.shooting = true;
+        }
+        if (fist) {
+          this.controls.special = true;
+        }
+      }
     }
     
     return this.controls;
+  }
+
+  // Check if hand is making a fist (fingertips below MCPs = curled)
+  isHandFist(lm) {
+    const tips = [8, 12, 16, 20];  // index, middle, ring, pinky tips
+    const mcps = [5, 9, 13, 17];   // corresponding MCP joints
+    let curled = 0;
+    for (let i = 0; i < 4; i++) {
+      if (lm[tips[i]].y > lm[mcps[i]].y) curled++;
+    }
+    return curled >= 3;
+  }
+
+  // Check if hand is open (fingertips above MCPs = extended)
+  isHandOpen(lm) {
+    const tips = [8, 12, 16, 20];
+    const mcps = [5, 9, 13, 17];
+    let extended = 0;
+    for (let i = 0; i < 4; i++) {
+      if (lm[tips[i]].y < lm[mcps[i]].y) extended++;
+    }
+    return extended >= 3;
   }
 
   getControls() {
@@ -615,6 +660,11 @@ class Player {
     this.tilt = 0;
     this.alive = true;
     this.enginePhase = 0;
+    
+    // Upgrade-driven properties
+    this.bulletDamage = 10;
+    this.spreadLevel = 0;  // 0=single, 1=double, 2=triple, 3=5-way
+    this.specialChargeRate = 0.12;
   }
 
   resize(cw, ch) {
@@ -640,8 +690,8 @@ class Player {
     
     this.enginePhase += 0.3;
     
-    // Charge special
-    this.special = Math.min(this.maxSpecial, this.special + 0.12);
+    // Charge special (uses upgradeable rate)
+    this.special = Math.min(this.maxSpecial, this.special + this.specialChargeRate);
     
     // Timers
     if (this.invincible) {
@@ -792,7 +842,7 @@ class Game {
   constructor() {
     this.canvas = document.getElementById('game-canvas');
     this.ctx = this.canvas.getContext('2d');
-    this.faceCtrl = new FaceController();
+    this.faceCtrl = new HandController();
     this.kbCtrl = new KeyboardController();
     this.sound = new SoundManager();
     
@@ -825,6 +875,23 @@ class Game {
     this.animFrame = null;
     this.useFace = true;
     
+    // Cache DOM references to avoid getElementById every frame
+    this.dom = {
+      indMouth: document.getElementById('ind-mouth'),
+      indBrow: document.getElementById('ind-brow'),
+      comboDisplay: document.getElementById('combo-display'),
+      comboValue: document.getElementById('combo-value'),
+      scoreValue: document.getElementById('score-value'),
+      waveValue: document.getElementById('wave-value'),
+      killsValue: document.getElementById('kills-value'),
+      healthFill: document.getElementById('health-fill'),
+      specialFill: document.getElementById('special-fill'),
+    };
+    
+    // Cache nebula gradients (rebuilt on resize)
+    this.nebulaG1 = null;
+    this.nebulaG2 = null;
+    
     this.gameLoop = this.gameLoop.bind(this);
   }
 
@@ -852,6 +919,16 @@ class Game {
     document.getElementById('start-btn').addEventListener('click', () => this.startGame());
     document.getElementById('restart-btn').addEventListener('click', () => this.startGame());
     document.getElementById('menu-btn').addEventListener('click', () => this.showScreen('start'));
+    document.getElementById('continue-btn').addEventListener('click', () => this.continueFromUpgrade());
+    
+    // Upgrade buy buttons
+    document.querySelectorAll('.upgrade-buy-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const card = e.target.closest('.upgrade-card');
+        const upgradeKey = card.dataset.upgrade;
+        this.purchaseUpgrade(upgradeKey);
+      });
+    });
   }
 
   resizeCanvas() {
@@ -859,6 +936,17 @@ class Game {
     this.canvas.height = window.innerHeight;
     if (this.starField) this.starField.resize(this.canvas.width, this.canvas.height);
     if (this.player) this.player.resize(this.canvas.width, this.canvas.height);
+    this.buildNebulaGradients();
+  }
+
+  buildNebulaGradients() {
+    const cw = this.canvas.width, ch = this.canvas.height;
+    this.nebulaG1 = this.ctx.createRadialGradient(cw * 0.3, ch * 0.4, 0, cw * 0.3, ch * 0.4, cw * 0.5);
+    this.nebulaG1.addColorStop(0, 'rgba(0, 80, 160, 0.06)');
+    this.nebulaG1.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    this.nebulaG2 = this.ctx.createRadialGradient(cw * 0.7, ch * 0.6, 0, cw * 0.7, ch * 0.6, cw * 0.4);
+    this.nebulaG2.addColorStop(0, 'rgba(100, 0, 150, 0.04)');
+    this.nebulaG2.addColorStop(1, 'rgba(0, 0, 0, 0)');
   }
 
   updateLoading(pct, text) {
@@ -869,11 +957,13 @@ class Game {
   }
 
   showScreen(name) {
-    ['loading', 'start', 'game', 'gameover'].forEach(s => {
+    ['loading', 'start', 'game', 'upgrade', 'gameover'].forEach(s => {
       const el = document.getElementById(s + '-screen');
       if (el) el.classList.toggle('hidden', s !== name);
     });
-    this.state = name === 'game' ? 'playing' : name;
+    if (name === 'game') this.state = 'playing';
+    else if (name === 'upgrade') this.state = 'upgrade';
+    else this.state = name;
   }
 
   startGame() {
@@ -886,6 +976,15 @@ class Game {
     this.combo = 0;
     this.maxCombo = 0;
     this.comboTimer = 0;
+    
+    // Reset upgrades
+    this.upgrades = {
+      fireRate:      { level: 0, maxLevel: 5, baseCost: 500,  costMult: 1.5 },
+      damage:        { level: 0, maxLevel: 5, baseCost: 500,  costMult: 1.5 },
+      maxHealth:     { level: 0, maxLevel: 5, baseCost: 400,  costMult: 1.4 },
+      spreadShot:    { level: 0, maxLevel: 3, baseCost: 800,  costMult: 2.0 },
+      specialCharge: { level: 0, maxLevel: 5, baseCost: 600,  costMult: 1.5 },
+    };
     
     this.player = new Player(this.canvas.width, this.canvas.height);
     this.enemies = [];
@@ -908,12 +1007,118 @@ class Game {
     this.kbCtrl.controls.x = 0.5;
     this.kbCtrl.controls.y = 0.7;
     
+    this.applyUpgrades();
     this.updateHUD();
     this.showScreen('game');
     this.announceWave();
     
     this.lastTime = performance.now();
     if (this.animFrame) cancelAnimationFrame(this.animFrame);
+    this.gameLoop(performance.now());
+  }
+
+  // ==================== UPGRADE SYSTEM ====================
+  getUpgradeCost(key) {
+    const u = this.upgrades[key];
+    if (u.level >= u.maxLevel) return Infinity;
+    return Math.floor(u.baseCost * Math.pow(u.costMult, u.level));
+  }
+
+  applyUpgrades() {
+    const u = this.upgrades;
+    // Fire rate: reduce cooldown (150 -> 150, 130, 110, 90, 75, 60)
+    CONFIG.bulletCooldown = Math.max(60, 150 - u.fireRate.level * 20);
+    // Damage: base 10, +5 per level
+    this.player.bulletDamage = 10 + u.damage.level * 5;
+    // Max health: 100 + 25 per level, also heal to full
+    this.player.maxHealth = 100 + u.maxHealth.level * 25;
+    this.player.health = this.player.maxHealth;
+    // Spread shot: level 1=double, 2=triple, 3=5-way
+    this.player.spreadLevel = u.spreadShot.level;
+    // Special charge rate: 0.12 base, +0.06 per level
+    this.player.specialChargeRate = 0.12 + u.specialCharge.level * 0.06;
+  }
+
+  purchaseUpgrade(key) {
+    const cost = this.getUpgradeCost(key);
+    if (this.score < cost) return;
+    if (this.upgrades[key].level >= this.upgrades[key].maxLevel) return;
+    
+    this.score -= cost;
+    this.upgrades[key].level++;
+    this.sound.powerUp();
+    
+    // Flash animation
+    const card = document.querySelector(`.upgrade-card[data-upgrade="${key}"]`);
+    card.classList.remove('just-bought');
+    void card.offsetWidth; // force reflow
+    card.classList.add('just-bought');
+    
+    this.renderUpgradeUI();
+  }
+
+  renderUpgradeUI() {
+    document.getElementById('upgrade-wave-num').textContent = this.wave;
+    document.getElementById('upgrade-credits').textContent = Math.floor(this.score).toLocaleString();
+    
+    const cards = document.querySelectorAll('.upgrade-card');
+    cards.forEach(card => {
+      const key = card.dataset.upgrade;
+      const u = this.upgrades[key];
+      const cost = this.getUpgradeCost(key);
+      const isMaxed = u.level >= u.maxLevel;
+      const canAfford = this.score >= cost;
+      
+      // Update level pips
+      const pips = card.querySelectorAll('.level-pip');
+      pips.forEach((pip, i) => {
+        pip.classList.toggle('filled', i < u.level);
+      });
+      
+      // Update cost display
+      const costEl = card.querySelector('.upgrade-cost');
+      costEl.textContent = isMaxed ? 'MAX' : Math.floor(cost).toLocaleString();
+      
+      // Update card states
+      card.classList.toggle('maxed-out', isMaxed);
+      card.classList.toggle('cant-afford', !isMaxed && !canAfford);
+    });
+  }
+
+  showUpgradeScreen() {
+    this.state = 'upgrade';
+    if (this.animFrame) cancelAnimationFrame(this.animFrame);
+    this.renderUpgradeUI();
+    this.showScreen('upgrade');
+  }
+
+  continueFromUpgrade() {
+    this.wave++;
+    this.waveSpawned = 0;
+    this.waveTotal = CONFIG.waveBaseEnemies + (this.wave - 1) * 3;
+    this.waveActive = true;
+    this.waveSpawnTimer = 0;
+    
+    // Apply upgrades and heal player
+    this.applyUpgrades();
+    
+    // Clear leftover objects
+    this.enemies = [];
+    this.playerBullets = [];
+    this.enemyBullets = [];
+    this.particles = [];
+    this.powerUps = [];
+    
+    // Reset player position
+    this.player.x = this.canvas.width / 2;
+    this.player.y = this.canvas.height * 0.75;
+    this.player.invincible = true;
+    this.player.invTimer = 2000;
+    
+    this.showScreen('game');
+    this.announceWave();
+    
+    this.lastTime = performance.now();
     this.gameLoop(performance.now());
   }
 
@@ -960,17 +1165,17 @@ class Game {
     // Shooting
     if (controls.shooting && this.player.canShoot()) {
       this.playerShoot();
-      document.getElementById('ind-mouth').classList.add('active');
+      this.dom.indMouth.classList.add('active');
     } else if (!controls.shooting) {
-      document.getElementById('ind-mouth').classList.remove('active');
+      this.dom.indMouth.classList.remove('active');
     }
     
     // Special
     if (controls.special && this.player.canSpecial()) {
       this.activateSpecial();
-      document.getElementById('ind-brow').classList.add('active');
+      this.dom.indBrow.classList.add('active');
     } else if (!controls.special) {
-      document.getElementById('ind-brow').classList.remove('active');
+      this.dom.indBrow.classList.remove('active');
     }
     
     // Stars
@@ -990,8 +1195,11 @@ class Game {
     }
     this.enemies = this.enemies.filter(e => e.alive);
     
-    // Particles
+    // Particles — cap at 150 to prevent lag spikes
     this.particles = this.particles.filter(p => p.update());
+    if (this.particles.length > 150) {
+      this.particles.splice(0, this.particles.length - 150);
+    }
     
     // Power-ups
     this.powerUps = this.powerUps.filter(p => p.update(ch));
@@ -1015,12 +1223,11 @@ class Game {
     }
     
     // Combo display
-    const comboEl = document.getElementById('combo-display');
     if (this.combo > 1) {
-      comboEl.classList.remove('hidden');
-      document.getElementById('combo-value').textContent = this.combo + 'x';
+      this.dom.comboDisplay.classList.remove('hidden');
+      this.dom.comboValue.textContent = this.combo + 'x';
     } else {
-      comboEl.classList.add('hidden');
+      this.dom.comboDisplay.classList.add('hidden');
     }
     
     this.updateHUD();
@@ -1031,15 +1238,35 @@ class Game {
   playerShoot() {
     this.sound.shoot();
     const px = this.player.x, py = this.player.y - this.player.height * 0.5;
+    const dmg = this.player.bulletDamage;
+    const sl = this.player.spreadLevel;
     
-    if (this.player.spreadShot) {
-      for (let a = -0.18; a <= 0.18; a += 0.18) {
-        this.playerBullets.push(new Bullet(px + Math.sin(a) * 12, py, {
-          vx: Math.sin(a) * 4, vy: -13, color: '#ffcc00', damage: 10
+    // Spread level determines shot pattern
+    // Also applies if player picks up a temporary spread power-up
+    const useSpread = sl > 0 || this.player.spreadShot;
+    const effectiveSpread = Math.max(sl, this.player.spreadShot ? 2 : 0);
+    
+    if (effectiveSpread >= 3) {
+      // 5-way spread
+      for (let a = -0.35; a <= 0.35; a += 0.175) {
+        this.playerBullets.push(new Bullet(px + Math.sin(a) * 10, py, {
+          vx: Math.sin(a) * 5, vy: -13, color: '#ffcc00', damage: dmg
         }));
       }
+    } else if (effectiveSpread === 2) {
+      // Triple shot
+      for (let a = -0.18; a <= 0.18; a += 0.18) {
+        this.playerBullets.push(new Bullet(px + Math.sin(a) * 12, py, {
+          vx: Math.sin(a) * 4, vy: -13, color: '#ffcc00', damage: dmg
+        }));
+      }
+    } else if (effectiveSpread === 1) {
+      // Double shot
+      this.playerBullets.push(new Bullet(px - 8, py, { vy: -14, color: '#00f5ff', damage: dmg }));
+      this.playerBullets.push(new Bullet(px + 8, py, { vy: -14, color: '#00f5ff', damage: dmg }));
     } else {
-      this.playerBullets.push(new Bullet(px, py, { vy: -14, color: '#00f5ff', damage: 10 }));
+      // Single shot
+      this.playerBullets.push(new Bullet(px, py, { vy: -14, color: '#00f5ff', damage: dmg }));
     }
     
     // Muzzle flash
@@ -1078,13 +1305,13 @@ class Game {
     this.sound.special();
     this.shake(12, 400);
     
-    // Shockwave particles
-    for (let i = 0; i < 50; i++) {
-      const angle = (Math.PI * 2 / 50) * i;
+    // Shockwave particles (reduced for performance)
+    for (let i = 0; i < 24; i++) {
+      const angle = (Math.PI * 2 / 24) * i;
       this.particles.push(new Particle(this.player.x, this.player.y, {
         vx: Math.cos(angle) * (7 + Math.random() * 3),
         vy: Math.sin(angle) * (7 + Math.random() * 3),
-        life: 1, decay: 0.015, size: 3.5,
+        life: 1, decay: 0.025, size: 3.5,
         color: ['#00f5ff', '#ff2d55', '#ffcc00', '#af52de'][i % 4],
         type: 'spark'
       }));
@@ -1093,7 +1320,7 @@ class Game {
     // Damage all enemies
     for (const e of this.enemies) {
       if (e.takeDamage(80)) {
-        this.explode(e.x, e.y, e.color, e.type === 'boss' ? 2 : 1);
+        this.explode(e.x, e.y, e.color, e.type === 'boss' ? 1.5 : 0.8);
         this.score += e.score;
         this.kills++;
         this.combo++;
@@ -1112,16 +1339,16 @@ class Game {
 
   explode(x, y, color, scale = 1) {
     this.sound.explosion(scale > 1);
-    const count = Math.floor(18 * scale);
+    const count = Math.floor(10 * scale);
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2;
       const spd = Math.random() * 5 * scale + 1;
       this.particles.push(new Particle(x, y, {
         vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
-        life: 1, decay: 0.018 + Math.random() * 0.02,
-        size: Math.random() * 4 * scale + 1,
+        life: 0.8, decay: 0.03 + Math.random() * 0.02,
+        size: Math.random() * 3.5 * scale + 1,
         color: [color, '#fff', '#ffcc00', '#ff9500'][Math.floor(Math.random() * 4)],
-        type: Math.random() > 0.4 ? 'spark' : 'circle'
+        type: Math.random() > 0.5 ? 'spark' : 'circle'
       }));
     }
   }
@@ -1138,18 +1365,9 @@ class Game {
       }
       
       if (this.waveSpawned >= this.waveTotal && this.enemies.length === 0) {
+        // Wave cleared! Show upgrade shop
         this.waveActive = false;
-        this.waveCooldown = 3000;
-      }
-    } else {
-      this.waveCooldown -= dt;
-      if (this.waveCooldown <= 0) {
-        this.wave++;
-        this.waveSpawned = 0;
-        this.waveTotal = CONFIG.waveBaseEnemies + (this.wave - 1) * 3;
-        this.waveActive = true;
-        this.waveSpawnTimer = 0;
-        this.announceWave();
+        setTimeout(() => this.showUpgradeScreen(), 1000);
       }
     }
   }
@@ -1278,21 +1496,20 @@ class Game {
   }
 
   updateHUD() {
-    document.getElementById('score-value').textContent = Math.floor(this.score).toLocaleString();
-    document.getElementById('wave-value').textContent = this.wave;
-    document.getElementById('kills-value').textContent = this.kills;
+    this.dom.scoreValue.textContent = Math.floor(this.score).toLocaleString();
+    this.dom.waveValue.textContent = this.wave;
+    this.dom.killsValue.textContent = this.kills;
     
     const hp = this.player.health / this.player.maxHealth;
-    document.getElementById('health-fill').style.width = (hp * 100) + '%';
-    document.getElementById('special-fill').style.width = (this.player.special / this.player.maxSpecial * 100) + '%';
+    this.dom.healthFill.style.width = (hp * 100) + '%';
+    this.dom.specialFill.style.width = (this.player.special / this.player.maxSpecial * 100) + '%';
     
-    const hf = document.getElementById('health-fill');
     if (hp < 0.3) {
-      hf.style.background = 'linear-gradient(90deg, #ff2d55, #ff3b30)';
+      this.dom.healthFill.style.background = 'linear-gradient(90deg, #ff2d55, #ff3b30)';
     } else if (hp < 0.6) {
-      hf.style.background = 'linear-gradient(90deg, #ff9500, #ffcc00)';
+      this.dom.healthFill.style.background = 'linear-gradient(90deg, #ff9500, #ffcc00)';
     } else {
-      hf.style.background = 'linear-gradient(90deg, #00f5ff, #34c759)';
+      this.dom.healthFill.style.background = 'linear-gradient(90deg, #00f5ff, #34c759)';
     }
   }
 
@@ -1314,18 +1531,13 @@ class Game {
     ctx.fillStyle = '#06080f';
     ctx.fillRect(-10, -10, cw + 20, ch + 20);
     
-    // Ambient nebula
-    const g = ctx.createRadialGradient(cw * 0.3, ch * 0.4, 0, cw * 0.3, ch * 0.4, cw * 0.5);
-    g.addColorStop(0, 'rgba(0, 80, 160, 0.06)');
-    g.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, cw, ch);
-    
-    const g2 = ctx.createRadialGradient(cw * 0.7, ch * 0.6, 0, cw * 0.7, ch * 0.6, cw * 0.4);
-    g2.addColorStop(0, 'rgba(100, 0, 150, 0.04)');
-    g2.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = g2;
-    ctx.fillRect(0, 0, cw, ch);
+    // Ambient nebula (uses cached gradients)
+    if (this.nebulaG1) {
+      ctx.fillStyle = this.nebulaG1;
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.fillStyle = this.nebulaG2;
+      ctx.fillRect(0, 0, cw, ch);
+    }
     
     // Stars
     this.starField.draw(ctx);
@@ -1342,21 +1554,19 @@ class Game {
     // Player bullets
     for (const b of this.playerBullets) b.draw(ctx);
     
-    // Player engine trail particles
+    // Player engine trail particles (1 per frame instead of 2)
     if (this.player.alive) {
-      for (let i = 0; i < 2; i++) {
-        this.particles.push(new Particle(
-          this.player.x + (Math.random() - 0.5) * 7,
-          this.player.y + this.player.height * 0.45 + 8,
-          {
-            vx: (Math.random() - 0.5) * 0.8,
-            vy: Math.random() * 2 + 0.8,
-            life: 0.5, decay: 0.03,
-            size: Math.random() * 2.5 + 0.8,
-            color: Math.random() > 0.5 ? '#00f5ff' : '#0077cc'
-          }
-        ));
-      }
+      this.particles.push(new Particle(
+        this.player.x + (Math.random() - 0.5) * 7,
+        this.player.y + this.player.height * 0.45 + 8,
+        {
+          vx: (Math.random() - 0.5) * 0.8,
+          vy: Math.random() * 2 + 0.8,
+          life: 0.5, decay: 0.04,
+          size: Math.random() * 2.5 + 0.8,
+          color: Math.random() > 0.5 ? '#00f5ff' : '#0077cc'
+        }
+      ));
       this.player.draw(ctx);
     }
     
